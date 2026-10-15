@@ -154,4 +154,397 @@
     .bar-c { background: var(--carb); transition: width 0.25s; }
     .bar-p { background: var(--pro); transition: width 0.25s; }
     .bar-f { background: var(--fat); transition: width 0.25s; }
-    .
+    .sync-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      background: #eff6ff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; min-width: 520px; }
+    th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { background: #f8fafc; font-size: 0.8rem; color: var(--subtext); white-space: nowrap; }
+    td input[type="text"] {
+      width: 100%;
+      min-width: 110px;
+      padding: 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    td input[type="number"] {
+      width: 62px;
+      padding: 6px 4px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      text-align: right;
+      font-size: 0.9rem;
+      font-family: monospace;
+    }
+    .kcal-cell { font-weight: 700; color: var(--primary); font-family: monospace; white-space: nowrap; }
+    .btn-del { background: #fee2e2; color: #dc2626; padding: 5px 8px; font-size: 0.78rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>📸 AI 飲食營養追蹤面板</h2>
+  <div class="subtitle">拍照辨識台灣外食與自煮份量，支援隨時手動微調</div>
+
+  <div class="api-box">
+    <div>🔑 <strong>Gemini API Key 設定</strong></div>
+    <div class="api-row">
+      <input type="password" id="api-key-input" placeholder="貼上 API Key (AIzaSy...)">
+      <button class="btn btn-sm" style="background:#334155;color:#fff;" id="save-key-btn">儲存</button>
+    </div>
+  </div>
+
+  <div class="upload-section">
+    <input type="file" id="image-input" accept="image/*" style="display:none">
+    <img id="preview" class="preview-img" alt="餐點預覽">
+    <input type="text" id="user-note" class="prompt-input" placeholder="選填備註：例如「柳丁半盤」、「去皮」、「少油」...">
+    <div class="action-btns">
+      <button class="btn btn-camera" id="choose-img-btn">📷 拍照 / 選照片</button>
+      <button class="btn btn-analyze" id="analyze-btn">✨ 交給 Gemini 辨識</button>
+    </div>
+    <div id="status-msg" class="status-msg">⏳ Gemini 正在分析餐點組成與重量，請稍候...</div>
+  </div>
+
+  <div id="ai-notes" class="ai-notes"></div>
+
+  <div class="dashboard">
+    <div class="stat-card">
+      <div class="stat-title">總熱量</div>
+      <div class="stat-value" id="tot-kcal">0</div>
+      <div class="stat-sub">kcal ｜ 總重 <span id="tot-weight">0</span>g</div>
+    </div>
+    <div class="stat-card carb">
+      <div class="stat-title">碳水化合物</div>
+      <div class="stat-value" id="tot-carb">0g</div>
+      <div class="stat-sub" id="pct-carb">0%</div>
+    </div>
+    <div class="stat-card pro">
+      <div class="stat-title">蛋白質</div>
+      <div class="stat-value" id="tot-pro">0g</div>
+      <div class="stat-sub" id="pct-pro">0%</div>
+    </div>
+    <div class="stat-card fat">
+      <div class="stat-title">脂肪</div>
+      <div class="stat-value" id="tot-fat">0g</div>
+      <div class="stat-sub" id="pct-fat">0%</div>
+    </div>
+  </div>
+
+  <div class="macro-bar-wrap">
+    <div class="macro-bar-labels">
+      <span>🟡 碳水 (4 kcal/g)</span>
+      <span>🟢 蛋白質 (4 kcal/g)</span>
+      <span>🔴 脂肪 (9 kcal/g)</span>
+    </div>
+    <div class="macro-bar">
+      <div id="bar-c" class="bar-c" style="width: 33%"></div>
+      <div id="bar-p" class="bar-p" style="width: 33%"></div>
+      <div id="bar-f" class="bar-f" style="width: 34%"></div>
+    </div>
+  </div>
+
+  <label class="sync-toggle">
+    <input type="checkbox" id="scale-with-weight" checked>
+    <span><strong>修改「重量」時自動按比例縮放三大營養素</strong></span>
+  </label>
+
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30%">食材名稱</th>
+          <th>重量(g)</th>
+          <th>碳水(g)</th>
+          <th>蛋白(g)</th>
+          <th>脂肪(g)</th>
+          <th>熱量</th>
+          <th>刪除</th>
+        </tr>
+      </thead>
+      <tbody id="food-tbody"></tbody>
+    </table>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <button class="btn btn-sm" style="background:var(--primary);color:#fff;" id="add-row-btn">＋ 手動新增食材</button>
+    <button class="btn btn-sm" style="background:#e2e8f0;color:#334155;" id="clear-rows-btn">清空表格</button>
+  </div>
+</div>
+
+<script>
+  var currentBase64Image = "";
+  var foods = [
+    { name: "範例：醬炒雞胸肉", weight: 170, carb: 4.5, pro: 42.0, fat: 6.0 },
+    { name: "範例：紫米飯", weight: 190, carb: 58.0, pro: 5.5, fat: 1.5 },
+    { name: "範例：炒青江菜", weight: 75, carb: 4.0, pro: 1.8, fat: 2.5 }
+  ];
+
+  window.addEventListener("DOMContentLoaded", function() {
+    var savedKey = localStorage.getItem("gemini_food_api_key");
+    if (savedKey) {
+      document.getElementById("api-key-input").value = savedKey;
+    }
+
+    document.getElementById("save-key-btn").addEventListener("click", saveApiKey);
+    document.getElementById("choose-img-btn").addEventListener("click", function() {
+      document.getElementById("image-input").click();
+    });
+    document.getElementById("image-input").addEventListener("change", handleImageSelect);
+    document.getElementById("analyze-btn").addEventListener("click", analyzeFoodWithGemini);
+    document.getElementById("add-row-btn").addEventListener("click", addNewRow);
+    document.getElementById("clear-rows-btn").addEventListener("click", clearAllRows);
+
+    renderTable();
+  });
+
+  function saveApiKey() {
+    var key = document.getElementById("api-key-input").value.trim();
+    if (!key) {
+      alert("請輸入有效的 API Key！");
+      return;
+    }
+    localStorage.setItem("gemini_food_api_key", key);
+    alert("✅ API Key 已成功儲存！");
+  }
+
+  function handleImageSelect(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+
+    var previewImg = document.getElementById("preview");
+    var reader = new FileReader();
+
+    reader.onload = function(e) {
+      previewImg.src = e.target.result;
+      previewImg.style.display = "block";
+
+      // 壓縮轉換
+      var img = new Image();
+      img.onload = function() {
+        var maxWidth = 1000;
+        var w = img.width;
+        var h = img.height;
+        if (w > maxWidth) {
+          h = Math.round((h * maxWidth) / w);
+          w = maxWidth;
+        }
+        var canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        var dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        currentBase64Image = dataUrl.split(",")[1];
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function delay(ms) {
+    return new Promise(function(resolve) { setTimeout(resolve, ms); });
+  }
+
+  async function analyzeFoodWithGemini() {
+    var inputKey = document.getElementById("api-key-input").value.trim();
+    var apiKey = inputKey || localStorage.getItem("gemini_food_api_key");
+
+    if (!apiKey) {
+      alert("請先輸入並儲存您的 Gemini API Key！");
+      return;
+    }
+    if (inputKey) {
+      localStorage.setItem("gemini_food_api_key", inputKey);
+    }
+
+    var note = document.getElementById("user-note").value.trim();
+    if (!currentBase64Image && !note) {
+      alert("請先拍張食物照片，或在備註欄填寫吃了什麼！");
+      return;
+    }
+
+    var statusEl = document.getElementById("status-msg");
+    var analyzeBtn = document.getElementById("analyze-btn");
+    statusEl.style.display = "block";
+    statusEl.innerText = "⏳ Gemini 正在分析餐點組成與重量，請稍候...";
+    analyzeBtn.disabled = true;
+
+    var promptText = "你是一位精通台灣小吃、水果、便當與家常菜份量的專業營養師。\n" +
+      "請根據餐點照片與備註，拆解食材組成與三大營養素，以 JSON 格式回傳，格式如下：\n" +
+      "{\n" +
+      '  "items": [\n' +
+      '    { "name": "食材名稱", "weight": 估計克數(數字), "carb": 碳水克數(數字), "pro": 蛋白質克數(數字), "fat": 脂肪克數(數字) }\n' +
+      "  ],\n" +
+      '  "sodium_mg": "預估總鈉含量範圍(如 50~100 mg)",\n' +
+      '  "advice": "1~2句精簡的營養分析建議"\n' +
+      "}\n" + (note ? "使用者額外備註：" + note : "");
+
+    var parts = [{ text: promptText }];
+    if (currentBase64Image) {
+      parts.push({
+        inline_data: { mime_type: "image/jpeg", data: currentBase64Image }
+      });
+    }
+
+    var success = false;
+    var lastError = null;
+
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        if (attempt > 1) {
+          statusEl.innerText = "⏳ 伺服器忙碌，進行第 " + attempt + " 次重試...";
+          await delay(1500);
+        }
+
+        var response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + apiKey, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: parts }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.2
+            }
+          })
+        });
+
+        var data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+
+        var rawText = data.candidates[0].content.parts[0].text;
+        var result = JSON.parse(rawText);
+
+        if (result.items && Array.isArray(result.items)) {
+          foods = result.items;
+          renderTable();
+        }
+
+        var notesEl = document.getElementById("ai-notes");
+        notesEl.style.display = "block";
+        notesEl.innerHTML = "<strong>💡 AI 營養解析：</strong>預估鈉含量約 <b>" + (result.sodium_mg || "未提供") + "</b>。<br>" + (result.advice || "");
+
+        success = true;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!success) {
+      alert("辨識失敗：\n" + (lastError ? lastError.message : "未知錯誤"));
+    }
+
+    statusEl.style.display = "none";
+    analyzeBtn.disabled = false;
+  }
+
+  function calcItemKcal(c, p, f) {
+    return (c * 4) + (p * 4) + (f * 9);
+  }
+
+  function renderTable() {
+    var tbody = document.getElementById("food-tbody");
+    tbody.innerHTML = "";
+    foods.forEach(function(item, index) {
+      var kcal = Math.round(calcItemKcal(item.carb, item.pro, item.fat));
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td><input type="text" value="' + item.name + '" oninput="foods[' + index + '].name = this.value"></td>' +
+        '<td><input type="number" step="1" min="0" value="' + item.weight + '" oninput="updateWeight(' + index + ', this.value)"></td>' +
+        '<td><input type="number" step="0.5" min="0" id="carb-' + index + '" value="' + item.carb + '" oninput="updateMacro(' + index + ', \'carb\', this.value)"></td>' +
+        '<td><input type="number" step="0.5" min="0" id="pro-' + index + '" value="' + item.pro + '" oninput="updateMacro(' + index + ', \'pro\', this.value)"></td>' +
+        '<td><input type="number" step="0.5" min="0" id="fat-' + index + '" value="' + item.fat + '" oninput="updateMacro(' + index + ', \'fat\', this.value)"></td>' +
+        '<td class="kcal-cell" id="kcal-' + index + '">' + kcal + ' kcal</td>' +
+        '<td><button class="btn btn-del" onclick="removeRow(' + index + ')">✕</button></td>';
+      tbody.appendChild(tr);
+    });
+    updateSummary();
+  }
+
+  function updateWeight(index, val) {
+    var newWeight = parseFloat(val) || 0;
+    var oldWeight = foods[index].weight;
+    var isSync = document.getElementById("scale-with-weight").checked;
+
+    if (isSync && oldWeight > 0) {
+      var ratio = newWeight / oldWeight;
+      foods[index].carb = Math.round(foods[index].carb * ratio * 10) / 10;
+      foods[index].pro  = Math.round(foods[index].pro * ratio * 10) / 10;
+      foods[index].fat  = Math.round(foods[index].fat * ratio * 10) / 10;
+      document.getElementById("carb-" + index).value = foods[index].carb;
+      document.getElementById("pro-" + index).value  = foods[index].pro;
+      document.getElementById("fat-" + index).value  = foods[index].fat;
+    }
+    foods[index].weight = newWeight;
+    refreshRowAndTotal(index);
+  }
+
+  function updateMacro(index, key, val) {
+    foods[index][key] = parseFloat(val) || 0;
+    refreshRowAndTotal(index);
+  }
+
+  function refreshRowAndTotal(index) {
+    var item = foods[index];
+    var kcal = Math.round(calcItemKcal(item.carb, item.pro, item.fat));
+    document.getElementById("kcal-" + index).innerText = kcal + " kcal";
+    updateSummary();
+  }
+
+  function updateSummary() {
+    var totWeight = 0, totCarb = 0, totPro = 0, totFat = 0;
+    foods.forEach(function(item) {
+      totWeight += Number(item.weight) || 0;
+      totCarb   += Number(item.carb) || 0;
+      totPro    += Number(item.pro) || 0;
+      totFat    += Number(item.fat) || 0;
+    });
+
+    var totKcal = calcItemKcal(totCarb, totPro, totFat);
+    document.getElementById("tot-weight").innerText = Math.round(totWeight);
+    document.getElementById("tot-kcal").innerText   = Math.round(totKcal);
+    document.getElementById("tot-carb").innerText   = totCarb.toFixed(1) + "g";
+    document.getElementById("tot-pro").innerText    = totPro.toFixed(1) + "g";
+    document.getElementById("tot-fat").innerText    = totFat.toFixed(1) + "g";
+
+    var cKcal = totCarb * 4, pKcal = totPro * 4, fKcal = totFat * 9;
+    var cPct = totKcal > 0 ? Math.round((cKcal / totKcal) * 100) : 0;
+    var pPct = totKcal > 0 ? Math.round((pKcal / totKcal) * 100) : 0;
+    var fPct = totKcal > 0 ? Math.max(0, 100 - cPct - pPct) : 0;
+
+    document.getElementById("pct-carb").innerText = cPct + "% (" + Math.round(cKcal) + " kcal)";
+    document.getElementById("pct-pro").innerText  = pPct + "% (" + Math.round(pKcal) + " kcal)";
+    document.getElementById("pct-fat").innerText  = fPct + "% (" + Math.round(fKcal) + " kcal)";
+
+    document.getElementById("bar-c").style.width = cPct + "%";
+    document.getElementById("bar-p").style.width = pPct + "%";
+    document.getElementById("bar-f").style.width = fPct + "%";
+  }
+
+  function addNewRow() {
+    foods.push({ name: "新食材", weight: 100, carb: 10, pro: 10, fat: 5 });
+    renderTable();
+  }
+
+  function removeRow(index) {
+    foods.splice(index, 1);
+    renderTable();
+  }
+
+  function clearAllRows() {
+    foods = [];
+    renderTable();
+  }
+</script>
+
+</body>
+</html>
